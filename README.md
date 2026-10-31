@@ -48,7 +48,7 @@ npm run dev
 ## 3. API
 
 Every endpoint except `callback` requires the `X-Api-Key: <INTERNAL_API_KEY>` header.
-`X-Actor: <email>` is optional and gets recorded in the audit log.
+`X-Actor: <email>` names the staff member behind the request and is recorded in the audit log. It is optional for reads and will be required for writes (see below).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -85,8 +85,27 @@ Notes:
 - Every read is written to the audit log with the person, plan or service type id, never contact data.
 - Disconnecting deletes cached attendance. A connection in `needs_reauth` returns 409 for every read.
 
-> The ministrytask front end must **not** hold `INTERNAL_API_KEY`. That needs either a server-side
-> part of ministrytask or user sign-in in this service. This is still an open decision.
+### How ministrytask calls this service (decided 31 Oct 2026)
+
+Only the **ministrytask backend** calls this service. The ministrytask front end never holds
+`INTERNAL_API_KEY` and never calls this service directly.
+
+```
+browser (staff signed in to ministrytask)
+   -> ministrytask backend   checks the staff session, holds INTERNAL_API_KEY
+      -> this service        X-Api-Key + X-Actor: <staff email>
+         -> Planning Center
+```
+
+Contract for the ministrytask backend:
+
+- Keep `INTERNAL_API_KEY` in its server-side secrets only, and call this service over HTTPS.
+- Send `X-Actor: <email of the signed-in staff member>` on every request. This service trusts it
+  because only a holder of the API key can send it, and records it in the audit log. Phase 3 writes
+  will require it, so that every preview and approval is tied to a person.
+- Decide which staff may see which data before calling. This service checks the key, not the person.
+- Pass error JSON (`error`, `message`, `retryAfterSeconds`) through or translate it; it never contains
+  tokens or provider response bodies.
 
 ## 4. Manual test checklist (live)
 
