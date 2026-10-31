@@ -1,0 +1,8 @@
+{
+  "name": "ministrytask-server-test-kit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Safe HTTP smoke tests for MinistryTask integrations service",
+  "scripts": {"test": "node test.mjs"},
+  "engines": {"node": ">=22"}
+}

@@ -6,6 +6,7 @@ coverage/
 .env
 .env.*
 !.env.example
+!smoke-test/.env.test.example
 
 # Local databases contain encrypted tokens and must never be committed.
 *.db

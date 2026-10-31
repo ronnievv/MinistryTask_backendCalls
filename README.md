@@ -203,4 +203,8 @@ What the live run showed:
 ```bash
 npm test        # mocked Planning Center: no network, no credentials
 npm run typecheck
+npm run smoke   # live smoke tests against a running server; reads only, see smoke-test/README.md
 ```
+
+`npm run smoke` needs the server running (`npm run dev`) and a connected Planning Center. It never writes
+to Planning Center or creates a change request. Optional checks need ids in `smoke-test/.env.test`.
