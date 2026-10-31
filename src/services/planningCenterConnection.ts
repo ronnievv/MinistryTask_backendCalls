@@ -240,23 +240,41 @@ export class PlanningCenterConnectionService {
     return new PcoClient((o) => this.getAccessToken(organizationId, o), this.oauth.userAgent, this.http);
   }
 
-  /** Minimal read-only check against one explicit resource: the connected user's own profile. */
-  async testRead(organizationId: string, actor: string): Promise<{ personId: string; name: string | null }> {
+  /**
+   * Runs a read against Planning Center and audits it. A reauth-class failure marks the
+   * connection needs_reauth so status reflects it. `target.id` must not be contact data.
+   */
+  async runRead<T>(
+    organizationId: string,
+    actor: string,
+    action: string,
+    target: { type: string; id?: string },
+    fn: (client: PcoClient) => Promise<T>,
+  ): Promise<T> {
     try {
-      const res = await this.clientFor(organizationId).getOne<PcoPersonAttributes>("/people/v2/me", {
-        "fields[Person]": "first_name,last_name,nickname,name",
-      });
-      await audit(this.db, { organizationId, provider: PROVIDER, actor, action: "test_read", outcome: "success", targetType: "pco_person", targetId: res.data.id });
-      return { personId: res.data.id, name: res.data.attributes.name };
+      const result = await fn(this.clientFor(organizationId));
+      await audit(this.db, { organizationId, provider: PROVIDER, actor, action, outcome: "success", targetType: target.type, targetId: target.id });
+      return result;
     } catch (err) {
       const e = err instanceof ConnectionError ? err : toPcoError(err);
       if (e instanceof PcoError && e.requiresReauth) {
         const conn = await this.findConnection(organizationId);
         if (conn) await this.markNeedsReauth(conn, e.kind);
       }
-      await audit(this.db, { organizationId, provider: PROVIDER, actor, action: "test_read", outcome: "failure", detail: { code: e instanceof PcoError ? e.kind : e.code } });
+      await audit(this.db, {
+        organizationId, provider: PROVIDER, actor, action, outcome: "failure", targetType: target.type, targetId: target.id,
+        detail: { code: e instanceof PcoError ? e.kind : e.code },
+      });
       throw e;
     }
+  }
+
+  /** Minimal read-only check against one explicit resource: the connected user's own profile. */
+  async testRead(organizationId: string, actor: string): Promise<{ personId: string; name: string | null }> {
+    return this.runRead(organizationId, actor, "test_read", { type: "pco_person" }, async (client) => {
+      const res = await client.getOne<PcoPersonAttributes>("/people/v2/me", { "fields[Person]": "first_name,last_name,nickname,name" });
+      return { personId: res.data.id, name: res.data.attributes.name };
+    });
   }
 
   // ---------- status / disconnect ----------
@@ -308,8 +326,15 @@ export class PlanningCenterConnectionService {
       })
       .where("id", "=", c.id)
       .execute();
+    // Data read through this connection goes with it.
+    await this.db.deleteFrom("pco_group_attendance_cache").where("organization_id", "=", organizationId).execute();
     await audit(this.db, { organizationId, provider: PROVIDER, actor, action: "disconnect", outcome: "success", detail: { revokedAtProvider: revoked } });
     return { revokedAtProvider: revoked };
+  }
+
+  /** Throws the same 409 errors a read would when the connection can't be used. */
+  async assertConnected(organizationId: string): Promise<void> {
+    await this.requireConnected(organizationId);
   }
 
   // ---------- helpers ----------

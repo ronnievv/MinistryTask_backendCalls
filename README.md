@@ -4,13 +4,14 @@ A small backend API that the ministrytask app calls over HTTPS. It holds all pro
 credentials and makes every privileged call to Planning Center (and later ClickUp and
 Google Calendar). The ministrytask front end never sees a provider token.
 
-**Current phase: 2 (connection foundation), Planning Center only.**
+**Current phase: 3 (Planning Center reads). Writes are not built yet.**
 
 | Status | What |
 |---|---|
 | Implemented, tested with mocks and live | OAuth 2.0 + PKCE connect, single-use state, encrypted token storage, refresh with rotation and a per-connection lock, connection status, one read-only test (`/people/v2/me`), disconnect with revocation, `needs_reauth` when access is removed, audit log. Live checklist (section 4) passed against City Hope Church on 31 Oct 2026. |
 | Implemented, tested with mocks only | Rate-limit/backoff handling, pagination helper, automatic refresh after the 2-hour access token expiry |
-| Not implemented | People reads and the approved profile writes (Phase 3), Services plan reads, Groups attendance, webhooks, ClickUp, Google Calendar, deployment |
+| Implemented, tested with mocks and live (Phase 3 reads) | People profile (approved fields only), a person's Services schedule, service types, upcoming plans, plan assignments, Groups attendance per person with a 6-hour cache. Checked live on 31 Oct 2026. |
+| Not implemented | Approved profile writes (preview and approval), webhooks, ClickUp, Google Calendar, deployment |
 
 Stack: Node 22+, TypeScript, Fastify, Kysely, SQLite (development). Kysely keeps a move to Postgres
 at deploy time to a dialect change.
@@ -47,7 +48,7 @@ npm run dev
 ## 3. API
 
 Every endpoint except `callback` requires the `X-Api-Key: <INTERNAL_API_KEY>` header.
-`X-Actor: <email>` is optional and gets recorded in the audit log.
+`X-Actor: <email>` names the staff member behind the request and is recorded in the audit log. It is optional for reads and will be required for writes (see below).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -62,8 +63,49 @@ KEY=...   # from your .env
 curl -s -X POST localhost:3000/v1/integrations/planning-center/connect -H "x-api-key: $KEY"
 ```
 
-> The ministrytask front end must **not** hold `INTERNAL_API_KEY`. That needs either a server-side
-> part of ministrytask or user sign-in in this service. This is still an open decision.
+### Planning Center reads (Phase 3)
+
+All `GET`, all need `X-Api-Key`. Ids are Planning Center ids (digits only); anything else returns 400
+before Planning Center is called. The same person id works in People, Services and Groups.
+
+| Path | Returns |
+|---|---|
+| `/v1/planning-center/people/:personId` | Names, status, emails, phone numbers, households with members. Only these fields are requested from Planning Center, so birthdate, medical notes and similar never reach this service. |
+| `/v1/planning-center/people/:personId/schedule` | Upcoming Services assignments, including declined ones: plan, service type, team, position, `confirmed` / `unconfirmed` / `declined`. |
+| `/v1/planning-center/people/:personId/group-attendance?days=90&refresh=false` | Each group event in the last `days` (1-365, default 90) with `attended` true / false / null (not recorded), plus a summary. Cached per person and window for 6 hours; `refresh=true` skips the cache. At most 150 events are checked; `truncated` says when more existed. |
+| `/v1/planning-center/service-types` | Active service types, by name. |
+| `/v1/planning-center/service-types/:serviceTypeId/plans?limit=10` | The next `limit` (1-25) plans of one service type. |
+| `/v1/planning-center/service-types/:serviceTypeId/plans/:planId/assignments` | Everyone scheduled on the plan, with team, position and response. |
+
+Notes:
+
+- Groups attendance has no per-person endpoint at Planning Center. Building it costs one request per
+  event (plus one per 100 attendees), so a first request for a busy person can take several seconds.
+  Planning Center allows about 100 requests per 20 seconds; the service backs off automatically.
+- Every read is written to the audit log with the person, plan or service type id, never contact data.
+- Disconnecting deletes cached attendance. A connection in `needs_reauth` returns 409 for every read.
+
+### How ministrytask calls this service (decided 31 Oct 2026)
+
+Only the **ministrytask backend** calls this service. The ministrytask front end never holds
+`INTERNAL_API_KEY` and never calls this service directly.
+
+```
+browser (staff signed in to ministrytask)
+   -> ministrytask backend   checks the staff session, holds INTERNAL_API_KEY
+      -> this service        X-Api-Key + X-Actor: <staff email>
+         -> Planning Center
+```
+
+Contract for the ministrytask backend:
+
+- Keep `INTERNAL_API_KEY` in its server-side secrets only, and call this service over HTTPS.
+- Send `X-Actor: <email of the signed-in staff member>` on every request. This service trusts it
+  because only a holder of the API key can send it, and records it in the audit log. Phase 3 writes
+  will require it, so that every preview and approval is tied to a person.
+- Decide which staff may see which data before calling. This service checks the key, not the person.
+- Pass error JSON (`error`, `message`, `retryAfterSeconds`) through or translate it; it never contains
+  tokens or provider response bodies.
 
 ## 4. Manual test checklist (live)
 

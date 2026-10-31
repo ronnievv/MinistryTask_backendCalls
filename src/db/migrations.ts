@@ -72,6 +72,22 @@ const migrations: Record<string, Migration> = {
       }
     },
   },
+  "002_group_attendance_cache": {
+    async up(db: Kysely<any>) {
+      await db.schema
+        .createTable("pco_group_attendance_cache")
+        .addColumn("organization_id", "text", (c) => c.notNull().references("organizations.id").onDelete("cascade"))
+        .addColumn("person_id", "text", (c) => c.notNull())
+        .addColumn("window_days", "integer", (c) => c.notNull())
+        .addColumn("payload", "text", (c) => c.notNull())
+        .addColumn("fetched_at", "text", (c) => c.notNull())
+        .addPrimaryKeyConstraint("pk_pco_group_attendance_cache", ["organization_id", "person_id", "window_days"])
+        .execute();
+    },
+    async down(db: Kysely<any>) {
+      await db.schema.dropTable("pco_group_attendance_cache").ifExists().execute();
+    },
+  },
 };
 
 export const migrationProvider: MigrationProvider = {

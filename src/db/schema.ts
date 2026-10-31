@@ -66,9 +66,23 @@ export interface AuditEventsTable {
   created_at: string;
 }
 
+/**
+ * Computed Groups attendance for one person and window. Planning Center has no per-person
+ * attendance endpoint, so building this costs one call per event: cache the result.
+ * Holds attendance only, never contact data.
+ */
+export interface PcoGroupAttendanceCacheTable {
+  organization_id: string;
+  person_id: string;
+  window_days: number;
+  payload: string; // JSON
+  fetched_at: string;
+}
+
 export interface Database {
   organizations: OrganizationsTable;
   integration_connections: IntegrationConnectionsTable;
   oauth_states: OAuthStatesTable;
   audit_events: AuditEventsTable;
+  pco_group_attendance_cache: PcoGroupAttendanceCacheTable;
 }

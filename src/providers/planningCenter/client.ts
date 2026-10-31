@@ -56,6 +56,21 @@ export class PcoClient {
     return out;
   }
 
+  /** Like listAll, but also keeps each page's `included` resources (for `include=`). */
+  async listAllWithIncluded<A>(path: string, query: Record<string, string> = {}, maxPages = 500): Promise<{ data: PcoResource<A>[]; included: PcoResource[] }> {
+    const data: PcoResource<A>[] = [];
+    const included: PcoResource[] = [];
+    let next: string | undefined = this.resolve(path, { per_page: "100", ...query });
+    for (let page = 0; next; page++) {
+      if (page >= maxPages) throw new PcoError("unknown", `Stopped after ${maxPages} pages of ${path}`);
+      const res: PcoListResponse<A> = await this.get<PcoListResponse<A>>(next);
+      data.push(...res.data);
+      included.push(...(res.included ?? []));
+      next = res.links?.next ?? undefined;
+    }
+    return { data, included };
+  }
+
   private async send<T>(url: string, token: string): Promise<T> {
     const res = await providerFetch(
       { url, headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "User-Agent": this.userAgent } },
