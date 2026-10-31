@@ -7,6 +7,8 @@ import { apiKeyGuard } from "./http/auth.ts";
 import { defaultHttpDeps, type HttpDeps } from "./providers/http.ts";
 import { PlanningCenterConnectionService } from "./services/planningCenterConnection.ts";
 import { errorToResponse, planningCenterRoutes } from "./routes/planningCenter.ts";
+import { PlanningCenterReadService } from "./services/planningCenterReads.ts";
+import { planningCenterDataRoutes } from "./routes/planningCenterData.ts";
 
 export interface AppOptions {
   config: Config;
@@ -48,10 +50,13 @@ export async function buildApp(opts: AppOptions) {
   });
 
   app.get("/healthz", async () => ({ ok: true }));
-  planningCenterRoutes(app, pco, apiKeyGuard(config.INTERNAL_API_KEY, orgId));
+  const guard = apiKeyGuard(config.INTERNAL_API_KEY, orgId);
+  planningCenterRoutes(app, pco, guard);
+  const reads = new PlanningCenterReadService(db, pco, { now: opts.now });
+  planningCenterDataRoutes(app, reads, guard);
 
   app.addHook("onClose", async () => {
     await db.destroy();
   });
-  return { app, db, pco, orgId };
+  return { app, db, pco, reads, orgId };
 }
