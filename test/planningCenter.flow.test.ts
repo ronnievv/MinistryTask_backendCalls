@@ -171,6 +171,30 @@ describe("token lifecycle", () => {
     expect((await connectionRow(db)).status).toBe("needs_reauth");
   });
 
+  it("marks needs_reauth on a bare 401 when the refresh is refused (app access removed)", async () => {
+    const fake = new FakePco().withDefaults();
+    const { app, db } = await makeApp(fake);
+    await connect(app, fake);
+    fake.on("GET /people/v2/me", () => json(401, { errors: [{ title: "Unauthorized" }] }));
+    fake.on("POST /oauth/token", () => json(401, { error: "invalid_grant" }));
+    const res = await app.inject({ method: "POST", url: `${P}/test-read`, headers: auth });
+    expect(res.statusCode).toBe(409);
+    expect((await connectionRow(db)).status).toBe("needs_reauth");
+    const status = await app.inject({ method: "GET", url: `${P}/status`, headers: auth });
+    expect(status.json().status).toBe("needs_reauth");
+  });
+
+  it("marks needs_reauth on a bare 401 that persists after a successful refresh", async () => {
+    const fake = new FakePco().withDefaults();
+    fake.on("GET /people/v2/me", () => json(401, { errors: [{ title: "Unauthorized" }] }));
+    const { app, db } = await makeApp(fake);
+    await connect(app, fake);
+    const res = await app.inject({ method: "POST", url: `${P}/test-read`, headers: auth });
+    expect(res.statusCode).toBe(409);
+    expect(fake.count("GET /people/v2/me")).toBe(2);
+    expect((await connectionRow(db)).status).toBe("needs_reauth");
+  });
+
   it("surfaces rate limits with Retry-After after bounded retries", async () => {
     const fake = new FakePco().withDefaults();
     fake.on("GET /people/v2/me", () => json(429, { errors: [{ code: "429" }] }, { "retry-after": "19" }));

@@ -23,10 +23,14 @@ export class PcoClient {
       return await this.send<T>(url, await this.getToken());
     } catch (err) {
       const e = asPcoError(err);
-      if (!(e instanceof PcoError) || e.kind !== "expired_token") throw e;
-      // Token expired between our expiry check and the call: refresh once, then retry.
+      // A 401 without a recognized hint is treated like an expired token: live Planning Center
+      // answers a removed app with a bare 401, not CAPUCHIN. A refused refresh marks needs_reauth.
+      if (!(e instanceof PcoError) || (e.kind !== "expired_token" && e.kind !== "unauthorized")) throw e;
       return this.send<T>(url, await this.getToken({ forceRefresh: true })).catch((e2) => {
-        throw asPcoError(e2);
+        const e3 = asPcoError(e2);
+        // Freshly refreshed token still rejected: the grant is gone, so a person must reconnect.
+        if (e3 instanceof PcoError && e3.kind === "unauthorized") throw new PcoError("revoked_token", e3.message, e3.status);
+        throw e3;
       });
     }
   }
