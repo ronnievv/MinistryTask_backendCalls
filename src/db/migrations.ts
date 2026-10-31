@@ -88,6 +88,29 @@ const migrations: Record<string, Migration> = {
       await db.schema.dropTable("pco_group_attendance_cache").ifExists().execute();
     },
   },
+  "003_change_requests": {
+    async up(db: Kysely<any>) {
+      await db.schema
+        .createTable("pco_change_requests")
+        .addColumn("id", "text", (c) => c.primaryKey())
+        .addColumn("organization_id", "text", (c) => c.notNull().references("organizations.id").onDelete("cascade"))
+        .addColumn("person_id", "text", (c) => c.notNull())
+        .addColumn("status", "text", (c) => c.notNull())
+        .addColumn("payload_enc", "text", (c) => c.notNull())
+        .addColumn("result_enc", "text")
+        .addColumn("requested_by", "text", (c) => c.notNull())
+        .addColumn("requested_at", "text", (c) => c.notNull())
+        .addColumn("expires_at", "text", (c) => c.notNull())
+        .addColumn("decided_by", "text")
+        .addColumn("decided_at", "text")
+        .addColumn("updated_at", "text", (c) => c.notNull())
+        .execute();
+      await db.schema.createIndex("ix_change_requests_person").on("pco_change_requests").columns(["organization_id", "person_id", "requested_at"]).execute();
+    },
+    async down(db: Kysely<any>) {
+      await db.schema.dropTable("pco_change_requests").ifExists().execute();
+    },
+  },
 };
 
 export const migrationProvider: MigrationProvider = {

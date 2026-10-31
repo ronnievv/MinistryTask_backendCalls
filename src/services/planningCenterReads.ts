@@ -113,19 +113,8 @@ export class PlanningCenterReadService {
 
   /** Approved profile fields only: sparse fieldsets keep birthdate, medical notes etc. out of the response. */
   person(organizationId: string, actor: string, personId: string): Promise<PersonProfile> {
-    return this.pco.runRead(organizationId, actor, "people.read", { type: "pco_person", id: personId }, async (client) => {
-      const res = await client.getOne<PcoPersonAttributes & { status: string | null }>(`/people/v2/people/${personId}`, {
-        include: "emails,phone_numbers,households",
-        "fields[Person]": "first_name,last_name,nickname,name,status,emails,phone_numbers,households",
-        "fields[Email]": "address,location,primary",
-        "fields[PhoneNumber]": "number,e164,location,primary",
-        "fields[Household]": "name,member_count,primary_contact_id",
-      });
-      const inc = res.included ?? [];
-      const emails = related<PcoEmailAttributes>(res.data, "emails", inc);
-      const phones = related<PcoPhoneNumberAttributes>(res.data, "phone_numbers", inc);
-      const households = related<PcoHouseholdAttributes>(res.data, "households", inc);
-
+    return this.pco.runCall(organizationId, actor, "people.read", { type: "pco_person", id: personId }, async (client) => {
+      const { profile, households } = await fetchContactProfile(client, personId);
       // Household members: one call per household (people usually have one).
       const withMembers = [];
       for (const h of households) {
@@ -133,27 +122,13 @@ export class PlanningCenterReadService {
         const members = related<PcoPersonAttributes>(hr.data, "people", hr.included ?? []).map((p) => ({ id: p.id, name: p.attributes.name ?? null }));
         withMembers.push({ id: h.id, name: h.attributes.name ?? null, primaryContactId: h.attributes.primary_contact_id ?? null, members });
       }
-
-      const a = res.data.attributes;
-      return {
-        id: res.data.id,
-        firstName: a.first_name ?? null,
-        lastName: a.last_name ?? null,
-        nickname: a.nickname ?? null,
-        name: a.name ?? null,
-        status: a.status ?? null,
-        emails: emails.map((e) => ({ id: e.id, address: e.attributes.address, location: e.attributes.location ?? null, primary: !!e.attributes.primary })),
-        phoneNumbers: phones.map((p) => ({
-          id: p.id, number: p.attributes.number, e164: p.attributes.e164 ?? null, location: p.attributes.location ?? null, primary: !!p.attributes.primary,
-        })),
-        households: withMembers,
-      };
+      return { ...profile, households: withMembers };
     });
   }
 
   /** The person's upcoming Services assignments, including declined ones. */
   schedule(organizationId: string, actor: string, personId: string): Promise<{ personId: string; items: ScheduleItem[] }> {
-    return this.pco.runRead(organizationId, actor, "services.schedule.read", { type: "pco_person", id: personId }, async (client) => {
+    return this.pco.runCall(organizationId, actor, "services.schedule.read", { type: "pco_person", id: personId }, async (client) => {
       const rows = await client.listAll<PcoScheduleAttributes>(`/services/v2/people/${personId}/schedules`, { filter: "future,with_declined", order: "starts_at" }, 5);
       const items = rows.map((s) => ({
         scheduleId: s.id,
@@ -174,7 +149,7 @@ export class PlanningCenterReadService {
 
   /** Active (not archived or deleted) service types, by name. */
   serviceTypes(organizationId: string, actor: string): Promise<{ id: string; name: string }[]> {
-    return this.pco.runRead(organizationId, actor, "services.service_types.read", { type: "pco_service_type" }, async (client) => {
+    return this.pco.runCall(organizationId, actor, "services.service_types.read", { type: "pco_service_type" }, async (client) => {
       const rows = await client.listAll<PcoServiceTypeAttributes>("/services/v2/service_types", {}, 10);
       return rows
         .filter((r) => !r.attributes.archived_at && !r.attributes.deleted_at)
@@ -185,7 +160,7 @@ export class PlanningCenterReadService {
 
   /** The next `limit` plans of one service type. */
   upcomingPlans(organizationId: string, actor: string, serviceTypeId: string, limit: number): Promise<PlanSummary[]> {
-    return this.pco.runRead(organizationId, actor, "services.plans.read", { type: "pco_service_type", id: serviceTypeId }, async (client) => {
+    return this.pco.runCall(organizationId, actor, "services.plans.read", { type: "pco_service_type", id: serviceTypeId }, async (client) => {
       const res = await client.get<{ data: PcoResource<PcoPlanAttributes>[] }>(`/services/v2/service_types/${serviceTypeId}/plans`, {
         filter: "future", order: "sort_date", per_page: String(limit),
       });
@@ -195,7 +170,7 @@ export class PlanningCenterReadService {
 
   /** Everyone scheduled on one plan, with team, position and response. */
   planAssignments(organizationId: string, actor: string, serviceTypeId: string, planId: string): Promise<PlanAssignments> {
-    return this.pco.runRead(organizationId, actor, "services.plan_assignments.read", { type: "pco_plan", id: planId }, async (client) => {
+    return this.pco.runCall(organizationId, actor, "services.plan_assignments.read", { type: "pco_plan", id: planId }, async (client) => {
       const base = `/services/v2/service_types/${serviceTypeId}/plans/${planId}`;
       const plan = await client.getOne<PcoPlanAttributes>(base);
       const { data, included } = await client.listAllWithIncluded<PcoPlanPersonAttributes>(`${base}/team_members`, { include: "team" }, 10);
@@ -225,7 +200,7 @@ export class PlanningCenterReadService {
    * attendances. The result is cached per person and window for ATTENDANCE_CACHE_TTL_MS.
    */
   groupAttendance(organizationId: string, actor: string, personId: string, windowDays: number, refresh = false): Promise<GroupAttendance> {
-    return this.pco.runRead(organizationId, actor, "groups.attendance.read", { type: "pco_person", id: personId }, async (client) => {
+    return this.pco.runCall(organizationId, actor, "groups.attendance.read", { type: "pco_person", id: personId }, async (client) => {
       // Never serve cached data for a connection that is no longer usable.
       await this.pco.assertConnected(organizationId);
 
@@ -307,6 +282,43 @@ export class PlanningCenterReadService {
       return result;
     });
   }
+}
+
+// ---------- shared fetches ----------
+
+export type ContactProfile = Omit<PersonProfile, "households">;
+
+/**
+ * One request for a person's names, emails and phone numbers (approved fields only), plus
+ * their households without members. Shared by the profile read and the change previews.
+ */
+export async function fetchContactProfile(client: PcoClient, personId: string): Promise<{ profile: ContactProfile; households: PcoResource<PcoHouseholdAttributes>[] }> {
+  const res = await client.getOne<PcoPersonAttributes & { status: string | null }>(`/people/v2/people/${personId}`, {
+    include: "emails,phone_numbers,households",
+    "fields[Person]": "first_name,last_name,nickname,name,status,emails,phone_numbers,households",
+    "fields[Email]": "address,location,primary",
+    "fields[PhoneNumber]": "number,e164,location,primary",
+    "fields[Household]": "name,member_count,primary_contact_id",
+  });
+  const inc = res.included ?? [];
+  const a = res.data.attributes;
+  return {
+    profile: {
+      id: res.data.id,
+      firstName: a.first_name ?? null,
+      lastName: a.last_name ?? null,
+      nickname: a.nickname ?? null,
+      name: a.name ?? null,
+      status: a.status ?? null,
+      emails: related<PcoEmailAttributes>(res.data, "emails", inc).map((e) => ({
+        id: e.id, address: e.attributes.address, location: e.attributes.location ?? null, primary: !!e.attributes.primary,
+      })),
+      phoneNumbers: related<PcoPhoneNumberAttributes>(res.data, "phone_numbers", inc).map((p) => ({
+        id: p.id, number: p.attributes.number, e164: p.attributes.e164 ?? null, location: p.attributes.location ?? null, primary: !!p.attributes.primary,
+      })),
+    },
+    households: related<PcoHouseholdAttributes>(res.data, "households", inc),
+  };
 }
 
 // ---------- mapping helpers ----------

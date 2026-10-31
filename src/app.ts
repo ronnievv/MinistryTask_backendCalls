@@ -8,7 +8,8 @@ import { defaultHttpDeps, type HttpDeps } from "./providers/http.ts";
 import { PlanningCenterConnectionService } from "./services/planningCenterConnection.ts";
 import { errorToResponse, planningCenterRoutes } from "./routes/planningCenter.ts";
 import { PlanningCenterReadService } from "./services/planningCenterReads.ts";
-import { planningCenterDataRoutes } from "./routes/planningCenterData.ts";
+import { planningCenterChangeRoutes, planningCenterDataRoutes } from "./routes/planningCenterData.ts";
+import { PlanningCenterChangeService } from "./services/planningCenterChanges.ts";
 
 export interface AppOptions {
   config: Config;
@@ -54,9 +55,11 @@ export async function buildApp(opts: AppOptions) {
   planningCenterRoutes(app, pco, guard);
   const reads = new PlanningCenterReadService(db, pco, { now: opts.now });
   planningCenterDataRoutes(app, reads, guard);
+  const changes = new PlanningCenterChangeService(db, cipher, pco, { now: opts.now });
+  planningCenterChangeRoutes(app, changes, guard);
 
   app.addHook("onClose", async () => {
     await db.destroy();
   });
-  return { app, db, pco, reads, orgId };
+  return { app, db, pco, reads, changes, orgId };
 }

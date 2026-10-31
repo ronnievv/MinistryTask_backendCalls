@@ -79,10 +79,39 @@ export interface PcoGroupAttendanceCacheTable {
   fetched_at: string;
 }
 
+export type ChangeRequestStatus =
+  | "pending" // previewed, waiting for approval
+  | "applying" // approved, being written now
+  | "applied" // every operation written
+  | "partially_applied" // stopped at a failed operation; earlier ones were written
+  | "failed" // the first operation failed; nothing was written
+  | "rejected"
+  | "stale" // the record changed in Planning Center after the preview; nothing was written
+  | "expired";
+
+/** A previewed edit to one Planning Center person, applied only after approval. */
+export interface PcoChangeRequestsTable {
+  id: string;
+  organization_id: string;
+  person_id: string;
+  status: ChangeRequestStatus;
+  /** Encrypted JSON: operations, preview and the record fingerprint. Contains contact data. */
+  payload_enc: string;
+  /** Encrypted JSON: per-operation results after approval. */
+  result_enc: string | null;
+  requested_by: string;
+  requested_at: string;
+  expires_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  updated_at: string;
+}
+
 export interface Database {
   organizations: OrganizationsTable;
   integration_connections: IntegrationConnectionsTable;
   oauth_states: OAuthStatesTable;
   audit_events: AuditEventsTable;
   pco_group_attendance_cache: PcoGroupAttendanceCacheTable;
+  pco_change_requests: PcoChangeRequestsTable;
 }
