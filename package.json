@@ -8,6 +8,7 @@
     "migrate": "tsx --env-file=.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "smoke": "node --env-file-if-exists=.env --env-file-if-exists=smoke-test/.env.test smoke-test/test.mjs",
     "gen:key": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\""
   },
   "repository": {
