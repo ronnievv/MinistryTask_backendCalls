@@ -67,7 +67,7 @@ curl -s -X POST localhost:3000/v1/integrations/planning-center/connect -H "x-api
 
 ## 4. Manual test checklist (live)
 
-Last run: 31 Oct 2026, City Hope Church (Planning Center organization 9203). All items passed.
+Last run: 31 Oct 2026, City Hope Church. All items passed.
 
 - [x] `POST /connect`, open the URL, approve, and see "Planning Center connected to City Hope Church"
 - [x] `GET /status` shows `connected`, the organization id, `missingScopes: []`, and no tokens
