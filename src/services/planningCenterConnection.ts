@@ -241,10 +241,10 @@ export class PlanningCenterConnectionService {
   }
 
   /**
-   * Runs a read against Planning Center and audits it. A reauth-class failure marks the
+   * Runs a Planning Center call (read or write) and audits it. A reauth-class failure marks the
    * connection needs_reauth so status reflects it. `target.id` must not be contact data.
    */
-  async runRead<T>(
+  async runCall<T>(
     organizationId: string,
     actor: string,
     action: string,
@@ -271,7 +271,7 @@ export class PlanningCenterConnectionService {
 
   /** Minimal read-only check against one explicit resource: the connected user's own profile. */
   async testRead(organizationId: string, actor: string): Promise<{ personId: string; name: string | null }> {
-    return this.runRead(organizationId, actor, "test_read", { type: "pco_person" }, async (client) => {
+    return this.runCall(organizationId, actor, "test_read", { type: "pco_person" }, async (client) => {
       const res = await client.getOne<PcoPersonAttributes>("/people/v2/me", { "fields[Person]": "first_name,last_name,nickname,name" });
       return { personId: res.data.id, name: res.data.attributes.name };
     });

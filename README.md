@@ -4,14 +4,15 @@ A small backend API that the ministrytask app calls over HTTPS. It holds all pro
 credentials and makes every privileged call to Planning Center (and later ClickUp and
 Google Calendar). The ministrytask front end never sees a provider token.
 
-**Current phase: 3 (Planning Center reads). Writes are not built yet.**
+**Current phase: 3 (Planning Center reads and previewed, approved profile writes).**
 
 | Status | What |
 |---|---|
 | Implemented, tested with mocks and live | OAuth 2.0 + PKCE connect, single-use state, encrypted token storage, refresh with rotation and a per-connection lock, connection status, one read-only test (`/people/v2/me`), disconnect with revocation, `needs_reauth` when access is removed, audit log. Live checklist (section 4) passed against City Hope Church on 31 Oct 2026. |
 | Implemented, tested with mocks only | Rate-limit/backoff handling, pagination helper, automatic refresh after the 2-hour access token expiry |
 | Implemented, tested with mocks and live (Phase 3 reads) | People profile (approved fields only), a person's Services schedule, service types, upcoming plans, plan assignments, Groups attendance per person with a 6-hour cache. Checked live on 31 Oct 2026. |
-| Not implemented | Approved profile writes (preview and approval), webhooks, ClickUp, Google Calendar, deployment |
+| Implemented, tested with mocks; partly live (Phase 3 writes) | Previewed, approved changes to names, nickname, emails and phone numbers (add, edit, set primary; no deletes). Live on 31 Oct 2026: preview, reject, and an applied and reverted phone edit. Adds, name edits and set-primary are tested with mocks only, because this service can't undo them. |
+| Not implemented | "Favorites" (undecided), webhooks, ClickUp, Google Calendar, deployment |
 
 Stack: Node 22+, TypeScript, Fastify, Kysely, SQLite (development). Kysely keeps a move to Postgres
 at deploy time to a dialect change.
@@ -84,6 +85,50 @@ Notes:
   Planning Center allows about 100 requests per 20 seconds; the service backs off automatically.
 - Every read is written to the audit log with the person, plan or service type id, never contact data.
 - Disconnecting deletes cached attendance. A connection in `needs_reauth` returns 409 for every read.
+
+### Planning Center profile changes (Phase 3)
+
+Nothing is written to Planning Center until a staff member approves a preview. Every route here
+**requires `X-Actor`** (400 `actor_required` without it).
+
+| Method | Path | What it does |
+|---|---|---|
+| POST | `/v1/planning-center/people/:personId/changes` | Checks the operations against the person's current record and returns a preview (`before` / `after` per field). Writes nothing. 201. |
+| GET | `/v1/planning-center/people/:personId/changes` | The person's 50 most recent change requests. |
+| GET | `/v1/planning-center/changes/:changeId` | One change request, with results once approved. |
+| POST | `/v1/planning-center/changes/:changeId/approve` | Re-reads the person. If anything changed since the preview: `stale` (409), nothing written. Otherwise writes the operations in order and stops at the first failure. |
+| POST | `/v1/planning-center/changes/:changeId/reject` | Closes the request. Writes nothing. |
+
+Body for a preview: `{ "operations": [ ... ] }`, 1 to 10 of:
+
+| `op` | Fields |
+|---|---|
+| `update_name` | any of `firstName`, `lastName`, `nickname` |
+| `add_email` | `address`, `location` (`Home` / `Work` / `Other`), optional `primary` |
+| `update_email` | `emailId`, then `address` and/or `location` |
+| `set_primary_email` | `emailId` |
+| `add_phone` | `number`, `location` (`Mobile` / `Home` / `Work` / `Pager` / `Fax` / `Skype` / `Other`), optional `primary` |
+| `update_phone` | `phoneId`, then `number` and/or `location` |
+| `set_primary_phone` | `phoneId` |
+
+```bash
+curl -s -X POST localhost:3000/v1/planning-center/people/123/changes \
+  -H "x-api-key: $KEY" -H "x-actor: you@cityhope.cc" -H 'content-type: application/json' \
+  -d '{"operations":[{"op":"update_phone","phoneId":"456","location":"Home"}]}'
+```
+
+Rules:
+
+- No deletes, no household changes, no other fields. Unknown operations or fields are rejected.
+- Email and phone ids must belong to that person. Duplicate addresses or numbers are refused, and
+  two operations may not change the same thing in one request.
+- Status after approval: `applied`, `partially_applied` (earlier operations were written, see
+  `results`) or `failed`. Writes are **never retried**; a failed operation is reported, not repeated.
+- Requests expire after 24 hours. Rejected, expired, stale and finished requests can't be approved.
+- The requester and approver can be the same person or different people; both are recorded.
+  ministrytask decides who may approve.
+- Previews and results contain contact data, so they are stored encrypted with the token key.
+  The audit log records ids and operation names only.
 
 ### How ministrytask calls this service (decided 31 Oct 2026)
 

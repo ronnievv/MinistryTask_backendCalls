@@ -48,7 +48,12 @@ export function errorToResponse(err: unknown): { status: number; body: { error: 
   if (err instanceof ConnectionError) return { status: err.httpStatus, body: { error: err.code, message: err.message } };
   if (err instanceof PcoError) {
     const status =
-      err.requiresReauth ? 409 : err.kind === "rate_limited" ? 429 : err.kind === "not_found" ? 404 : err.kind === "forbidden" || err.kind === "no_app_access" ? 403 : 502;
+      err.requiresReauth || err.kind === "conflict" ? 409
+      : err.kind === "rate_limited" ? 429
+      : err.kind === "not_found" ? 404
+      : err.kind === "validation" ? 422
+      : err.kind === "forbidden" || err.kind === "no_app_access" ? 403
+      : 502;
     return {
       status,
       body: {

@@ -19,14 +19,27 @@ export class PcoClient {
 
   async get<T = unknown>(pathOrUrl: string, query?: Record<string, string>): Promise<T> {
     const url = this.resolve(pathOrUrl, query);
+    return this.withAuthRetry((token) => this.send<T>(url, token));
+  }
+
+  /**
+   * One JSON:API write (POST/PATCH). Never retried on failure: only an auth rejection, which
+   * means Planning Center did not apply it, is repeated once with a refreshed token.
+   */
+  async write<T = unknown>(method: "POST" | "PATCH", path: string, body: unknown): Promise<T> {
+    const url = this.resolve(path);
+    return this.withAuthRetry((token) => this.send<T>(url, token, { method, body: JSON.stringify(body) }));
+  }
+
+  private async withAuthRetry<T>(call: (token: string) => Promise<T>): Promise<T> {
     try {
-      return await this.send<T>(url, await this.getToken());
+      return await call(await this.getToken());
     } catch (err) {
       const e = asPcoError(err);
       // A 401 without a recognized hint is treated like an expired token: live Planning Center
       // answers a removed app with a bare 401, not CAPUCHIN. A refused refresh marks needs_reauth.
       if (!(e instanceof PcoError) || (e.kind !== "expired_token" && e.kind !== "unauthorized")) throw e;
-      return this.send<T>(url, await this.getToken({ forceRefresh: true })).catch((e2) => {
+      return call(await this.getToken({ forceRefresh: true })).catch((e2) => {
         const e3 = asPcoError(e2);
         // Freshly refreshed token still rejected: the grant is gone, so a person must reconnect.
         if (e3 instanceof PcoError && e3.kind === "unauthorized") throw new PcoError("revoked_token", e3.message, e3.status);
@@ -71,11 +84,10 @@ export class PcoClient {
     return { data, included };
   }
 
-  private async send<T>(url: string, token: string): Promise<T> {
-    const res = await providerFetch(
-      { url, headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "User-Agent": this.userAgent } },
-      this.deps,
-    );
+  private async send<T>(url: string, token: string, write?: { method: "POST" | "PATCH"; body: string }): Promise<T> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: "application/json", "User-Agent": this.userAgent };
+    if (write) headers["Content-Type"] = "application/json";
+    const res = await providerFetch({ url, headers, ...(write ? { method: write.method, body: write.body } : {}) }, this.deps);
     return (await res.json()) as T;
   }
 
