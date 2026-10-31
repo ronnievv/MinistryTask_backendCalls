@@ -8,8 +8,8 @@ Google Calendar). The ministrytask front end never sees a provider token.
 
 | Status | What |
 |---|---|
-| Implemented and tested (mocked provider) | OAuth 2.0 + PKCE connect, single-use state, encrypted token storage, refresh with rotation and a per-connection lock, connection status, one read-only test (`/people/v2/me`), disconnect with revocation, rate-limit/backoff handling, pagination helper, audit log |
-| Implemented, waiting on your credentials | Everything above against the real Planning Center. **Nothing has been tested live yet.** |
+| Implemented, tested with mocks and live | OAuth 2.0 + PKCE connect, single-use state, encrypted token storage, refresh with rotation and a per-connection lock, connection status, one read-only test (`/people/v2/me`), disconnect with revocation, `needs_reauth` when access is removed, audit log. Live checklist (section 4) passed against City Hope Church on 31 Oct 2026. |
+| Implemented, tested with mocks only | Rate-limit/backoff handling, pagination helper, automatic refresh after the 2-hour access token expiry |
 | Not implemented | People reads and the approved profile writes (Phase 3), Services plan reads, Groups attendance, webhooks, ClickUp, Google Calendar, deployment |
 
 Stack: Node 22+, TypeScript, Fastify, Kysely, SQLite (development). Kysely keeps a move to Postgres
@@ -25,8 +25,7 @@ at deploy time to a dialect change.
    - Local: `http://localhost:3000/v1/integrations/planning-center/callback`
    - Production (later): `https://<your-integration-domain>/v1/integrations/planning-center/callback`
 
-   > **Unverified:** the Planning Center docs don't say whether `http://localhost` redirect URIs are
-   > accepted. If the form rejects it, run a temporary HTTPS tunnel and set `PUBLIC_BASE_URL` to that URL.
+   > Planning Center accepts the `http://localhost` redirect URI (confirmed 31 Oct 2026).
 4. Copy the **Client ID** and **Secret** straight into your local `.env` (next step).
    Do not paste them into chat, email, ClickUp or Git.
 
@@ -68,16 +67,28 @@ curl -s -X POST localhost:3000/v1/integrations/planning-center/connect -H "x-api
 
 ## 4. Manual test checklist (live)
 
-- [ ] `POST /connect`, open the URL, approve, and see "Planning Center connected to City Hope Church"
-- [ ] `GET /status` shows `connected`, the organization id, `missingScopes: []`, and no tokens
-- [ ] Put the organization id from status into `PCO_EXPECTED_ORGANIZATION_ID` and restart
-- [ ] `POST /test-read` returns your own Planning Center person id and name
-- [ ] Reloading the old callback URL shows "invalid or was already used"
-- [ ] Clicking **Deny** at Planning Center shows "cancelled or denied"
-- [ ] `POST /disconnect` returns `revokedAtProvider: true`, and `test-read` then returns `not_connected`
-- [ ] Reconnect works
-- [ ] In Planning Center, removing the app's access makes `test-read` return 409 and status show `needs_reauth`
-- [ ] `sqlite3 data/integrations.db "select access_token_enc from integration_connections"` shows only `v1:k1:...` ciphertext
+Last run: 31 Oct 2026, City Hope Church (Planning Center organization 9203). All items passed.
+
+- [x] `POST /connect`, open the URL, approve, and see "Planning Center connected to City Hope Church"
+- [x] `GET /status` shows `connected`, the organization id, `missingScopes: []`, and no tokens
+- [x] Put the organization id from status into `PCO_EXPECTED_ORGANIZATION_ID` and restart
+- [x] `POST /test-read` returns your own Planning Center person id and name
+- [x] Reloading the old callback URL shows "invalid or was already used"
+- [x] `POST /disconnect` returns `revokedAtProvider: true`, and `test-read` then returns `not_connected`
+- [x] Reconnect works
+- [x] In Planning Center, removing the app's access makes `test-read` return 409 and status show `needs_reauth`
+- [x] Clicking **Deny** at Planning Center shows "cancelled or denied" (run this after removing access; see below)
+- [x] `sqlite3 data/integrations.db "select access_token_enc from integration_connections"` shows only `v1:k1:...` ciphertext
+
+What the live run showed:
+
+- Planning Center remembers an approval. While the app is authorized for your account, a new connect link
+  goes straight to "connected" with no Allow/Deny screen, even after `/disconnect` revokes the tokens.
+  The Allow/Deny screen only appears again after you remove the app under **Authorized applications** at
+  <https://api.planningcenteronline.com/oauth/applications>.
+- When access is removed, Planning Center answers with a plain 401 and no documented error hint. The
+  service now refreshes once on any 401, and marks the connection `needs_reauth` when the refresh is refused.
+- Connect links expire after 10 minutes. An expired link shows "This connection link expired. Start again."
 
 ## 5. Security notes
 
