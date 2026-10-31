@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+
+# Real secrets never get committed. Only .env.example (placeholders) is tracked.
+.env
+.env.*
+!.env.example
+
+# Local databases contain encrypted tokens and must never be committed.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+data/
+
+.DS_Store
+*.log
